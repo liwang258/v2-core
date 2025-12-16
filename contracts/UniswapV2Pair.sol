@@ -84,16 +84,27 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         token1 = _token1;
     }
 
+    /**
+     * 这个方法更新储备量和价格累加器
+     * @param balance0 新的 token0 余额
+     * @param balance1 新的 token1 余额
+     * @param _reserve0 上一次的 token0 储备量
+     * @param _reserve1 上一次的 token1 储备量
+     */
     // update reserves and, on the first call per block, price accumulators
     function _update(uint balance0, uint balance1, uint112 _reserve0, uint112 _reserve1) private {
         require(balance0 <= uint112(-1) && balance1 <= uint112(-1), 'UniswapV2: OVERFLOW');
         uint32 blockTimestamp = uint32(block.timestamp % 2 ** 32);
         uint32 timeElapsed = blockTimestamp - blockTimestampLast; // overflow is desired
+        //关键点:同一个区块内的交易不会更新价格累加器，只有在新的区块内才会更新
+        //即：新区块的第一笔交易瞬时价格 乘以 时间差(用来后续计算TWAP的)
+        //对有些合约来说他指指定了交易价格必须在某个范围内才允许交易，这个时候就会用到这个价格累加器来计算TWAP的值
         if (timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
             // * never overflows, and + overflow is desired
             price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
             price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
         }
+        //更新储备量
         reserve0 = uint112(balance0);
         reserve1 = uint112(balance1);
         blockTimestampLast = blockTimestamp;
@@ -121,6 +132,10 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         }
     }
 
+    /**
+     *
+     * @param to
+     */
     // this low-level function should be called from a contract which performs important safety checks
     function mint(address to) external lock returns (uint liquidity) {
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
@@ -172,6 +187,13 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
     /**
      * 用户在界面上使用token1购买token0调用的核心方法
+     * 在调用这个方法之前，用户已经把想要购买 token0（比如 ETH）所需的 token1（比如 USDT）转账到这个合约地址了
+     * 这里的逻辑是：把用户转账进来的 token1 作为输入，计算出可以兑换多少 token0 作为输出，然后把 token0 转账给用户
+     * 通过lock来保证同一个时刻只能有一个swap操作在执行，防止重入攻击
+     * 对用户来说，这个方法的调用通常是通过路由合约 UniswapV2Router02 来间接调用的
+     * 例如用户想用 USDT 买入 ETH，路由合约会先把 USDT 转账到这个 Pair 合约地址，然后调用这个 swap 方法，
+     * 转账操作和调用这个swap方法是两个独立的交易(用户通过合约交易或者钱包发起，只要这2个交易中有一个失败，整个交易都会回滚)
+     * 参数如下：
      * @param amount0Out 要取出的 token0 数量（比如 USDT 是 token1 时，这里为 0）
      * @param amount1Out 要取出的 token1 数量（比如要买入 60000 USDT，这里填 60000 * 10^6，USDT 是 6 位小数）
      * @param to 接收买入代币（USDT）的用户地址
@@ -180,8 +202,9 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     // this low-level function should be called from a contract which performs important safety checks
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
         require(amount0Out > 0 || amount1Out > 0, 'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT');
+        //这里通过内联汇编方式获取储备量，节省gas，直接从一个存储槽读取多个变量(自己切割)
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
-        //校验可购买的量
+        //校验可购买的量不能超过储备量
         require(amount0Out < _reserve0 && amount1Out < _reserve1, 'UniswapV2: INSUFFICIENT_LIQUIDITY');
 
         uint balance0;
@@ -191,25 +214,37 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
             address _token0 = token0;
             address _token1 = token1;
             require(to != _token0 && to != _token1, 'UniswapV2: INVALID_TO');
+            //将指定数量的代币转给用户
             if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out); // optimistically transfer tokens
             if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out); // optimistically transfer tokens
+            // 闪电贷逻辑 TODO 待理解
             if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+            // 获取最新余额(用户转入的代币已经到账了，转给用户的代币已经扣除了)
             balance0 = IERC20(_token0).balanceOf(address(this));
             balance1 = IERC20(_token1).balanceOf(address(this));
         }
+        /**
+         * 这里计算用户实际转入的代币数量，_reserve0是之前的储备粮量，balance0是现在的余额
+         * 如果用户要买入 token0，那么用户需要转入 token1，balance1 会增加，amount1Out 是 0 amount0Out>0
+         * 如果用户要买入 token1，那么用户需要转入 token0，balance0 会增加，amount0Out 是 0 amount1Out>0
+         */
         uint amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
         uint amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
         require(amount0In > 0 || amount1In > 0, 'UniswapV2: INSUFFICIENT_INPUT_AMOUNT');
         {
+            //这里将balance0和balance1乘以1000，再减去用户转入的amount0In和amount1In乘以3(即扣除0.3%的手续费)
+            //当前这个时候还只是计算，并没有实际扣除手续费
             // scope for reserve{0,1}Adjusted, avoids stack too deep errors
             uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
             uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+            //扣除手续费后，理论上k值要大于等于以前的k值，否则交易就不合法
             require(
+                // 因为balance0Adjusted和balance1Adjusted都乘以1000了，所以右边的k值要乘以1000的平方
                 balance0Adjusted.mul(balance1Adjusted) >= uint(_reserve0).mul(_reserve1).mul(1000 ** 2),
                 'UniswapV2: K'
             );
         }
-
+        //更新储备量，计算TWAP价格累加器
         _update(balance0, balance1, _reserve0, _reserve1);
         emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
     }
