@@ -111,16 +111,27 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         emit Sync(reserve0, reserve1);
     }
 
+    /**
+     * 计算并且分配手续费给feeTo地址
+     * @param _reserve0 token0的储备量
+     * @param _reserve1 token1的储备量
+     * @return feeOn 返回手续费开关是否打开
+     */
     // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)
     function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns (bool feeOn) {
+        //获取手续费接收地址
         address feeTo = IUniswapV2Factory(factory).feeTo();
+        //非0地址说明手续费开关打开了
         feeOn = feeTo != address(0);
+        //获取上一次的k值(reserve0*reserve1)
         uint _kLast = kLast; // gas savings
         if (feeOn) {
             if (_kLast != 0) {
+                //这里计算当前的rootK和上一次的rootKLast 使用的是储备量的乘积开平方(几何平均数)
                 uint rootK = Math.sqrt(uint(_reserve0).mul(_reserve1));
                 uint rootKLast = Math.sqrt(_kLast);
                 if (rootK > rootKLast) {
+                    //totalSupply=首次发行 + 后续添加流动性发行 - 移除流动性销毁 + 手续费发行
                     uint numerator = totalSupply.mul(rootK.sub(rootKLast));
                     uint denominator = rootK.mul(5).add(rootKLast);
                     uint liquidity = numerator / denominator;
@@ -133,14 +144,19 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     /**
-     *
-     * @param to
+     *  这个方法是用户添加流动性时调用的核心方法
+     * @param to 接收流动性代币的用户地址
+     * @return liquidity 用户获得的流动性代币数量
      */
     // this low-level function should be called from a contract which performs important safety checks
     function mint(address to) external lock returns (uint liquidity) {
+        //获取当前储备量
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
+        //获取token0当前的余额(用户在router合约中已经把对应数量的token0和token1转账到这个pair合约地址了)
         uint balance0 = IERC20(token0).balanceOf(address(this));
+        //获取token1当前的余额(用户在router合约中已经把对应数量的token0和token1转账到这个pair合约地址了)
         uint balance1 = IERC20(token1).balanceOf(address(this));
+        //这里得到用户实际添加的token数量
         uint amount0 = balance0.sub(_reserve0);
         uint amount1 = balance1.sub(_reserve1);
 
