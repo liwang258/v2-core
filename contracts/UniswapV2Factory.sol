@@ -30,7 +30,7 @@ contract UniswapV2Factory is IUniswapV2Factory {
     //创建交易对
     function createPair(address tokenA, address tokenB) external returns (address pair) {
         require(tokenA != tokenB, 'UniswapV2: IDENTICAL_ADDRESSES');
-        //交易对小的(贵的)在前面，大的在后面
+        //交易对小的(字节序)在前面，大的在后面，本质上是归一化
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         require(token0 != address(0), 'UniswapV2: ZERO_ADDRESS');
         //这首次创建交易对必然是0地址，如果不是0地址说明已经创建过了，不允许重复创建交易对
