@@ -135,7 +135,9 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
                     uint numerator = totalSupply.mul(rootK.sub(rootKLast));
                     uint denominator = rootK.mul(5).add(rootKLast);
                     uint liquidity = numerator / denominator;
-                    if (liquidity > 0) _mint(feeTo, liquidity);
+                    //这里给fee增加流动性，会增加总流动性LP,会导致LP提供者的份额有所降低如原来LP总值=100这里mint后变成101(其中feeto持有1 LP提供者持有100)
+                    //虽然份额小爱变小了，但是tokenA和tokenB量变多了(因为用户需要超额支付比如他100个tokenA会有0.3个就在当前合约中)，最后LP能入出的tokenA比以前多(升值)
+                    if (liquidity > 0) _mint(feeTo, liquidity);//给feeto地址增发流动性
                 }
             }
         } else if (_kLast != 0) {
@@ -175,14 +177,20 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         if (feeOn) kLast = uint(reserve0).mul(reserve1); // reserve0 and reserve1 are up-to-date
         emit Mint(msg.sender, amount0, amount1);
     }
-
+    /**
+    *移除流动性
+    *
+    */
     // this low-level function should be called from a contract which performs important safety checks
     function burn(address to) external lock returns (uint amount0, uint amount1) {
+        //当前的储备量
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
         address _token0 = token0; // gas savings
         address _token1 = token1; // gas savings
+        //获取当然合约的总余额
         uint balance0 = IERC20(_token0).balanceOf(address(this));
         uint balance1 = IERC20(_token1).balanceOf(address(this));
+       //当前合约的总流动性
         uint liquidity = balanceOf[address(this)];
 
         bool feeOn = _mintFee(_reserve0, _reserve1);
