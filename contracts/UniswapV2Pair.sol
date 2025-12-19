@@ -287,7 +287,9 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         _safeTransfer(_token0, to, IERC20(_token0).balanceOf(address(this)).sub(reserve0));
         _safeTransfer(_token1, to, IERC20(_token1).balanceOf(address(this)).sub(reserve1));
     }
-
+    // 这里应对特殊场景，比如有用户向当前合约直接转账token0和token1或者其中的一种，这个时候储备量是还没变(记录在reserve0和reserve1字段中)
+    // 为防止这部分异常转入的token变成谁也操作不了的死token可以调用这个方法强制将合约持有的这两个token数量更新到储备量字段中
+    // 这么操作后会导致k值变化 打破兑换比例  但是总价值不变(LP提币是按照比例来的，数量更
     // force reserves to match balances
     function sync() external lock {
         _update(IERC20(token0).balanceOf(address(this)), IERC20(token1).balanceOf(address(this)), reserve0, reserve1);
