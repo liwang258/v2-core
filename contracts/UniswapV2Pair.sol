@@ -112,10 +112,10 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     /**
-     * 计算并且分配手续费给feeTo地址
+     * 计算并且分配交易费给feeTo地址
      * @param _reserve0 token0的储备量
      * @param _reserve1 token1的储备量
-     * @return feeOn 返回手续费开关是否打开
+     * @return feeOn 返回feeto收取交易费开关是否打开
      */
     // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)
     function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns (bool feeOn) {
@@ -190,21 +190,28 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         //获取当然合约的总余额
         uint balance0 = IERC20(_token0).balanceOf(address(this));
         uint balance1 = IERC20(_token1).balanceOf(address(this));
-       //当前合约的总流动性
+       //当前合约的总流动性，正常来说当前合约持有的流动性(本质上是当前合约发放的token(LP))应该为0,用户要移除流动性的时候需要将自己持有的合约token(LP)转移给交易合约
+       //这个时候交易合约就知道用户要销毁多少流动性了
         uint liquidity = balanceOf[address(this)];
 
         bool feeOn = _mintFee(_reserve0, _reserve1);
+         //因为_mintFee方法可能会因为手续费增发流动性(例totalSupply会增加)
         uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
+       //通过用户转移过来的流动性数量/总发行量得到这个用户本次销毁的比例
+       //上述比例*交易对合约中各个token当前的余额 得到应该要销毁的token(注意这个token不是交易合约发的)的数量
         amount0 = liquidity.mul(balance0) / _totalSupply; // using balances ensures pro-rata distribution
-        amount1 = liquidity.mul(balance1) / _totalSupply; // using balances ensures pro-rata distribution
+        amount1 = liquidity.mul(balance1) / _totalSupply; //b using balances ensures pro-rata distribution
         require(amount0 > 0 && amount1 > 0, 'UniswapV2: INSUFFICIENT_LIQUIDITY_BURNED');
+       //当前合约销毁liquidity数量的流动性
         _burn(address(this), liquidity);
+       //当前合约转移amount0数量的token0到to地址(即用户提现)
         _safeTransfer(_token0, to, amount0);
         _safeTransfer(_token1, to, amount1);
         balance0 = IERC20(_token0).balanceOf(address(this));
         balance1 = IERC20(_token1).balanceOf(address(this));
-
+       //更新交易对中2种token的储备量
         _update(balance0, balance1, _reserve0, _reserve1);
+       //更新kLast
         if (feeOn) kLast = uint(reserve0).mul(reserve1); // reserve0 and reserve1 are up-to-date
         emit Burn(msg.sender, amount0, amount1, to);
     }
