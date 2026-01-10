@@ -11,7 +11,7 @@ import './interfaces/IUniswapV2Callee.sol';
 contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     using SafeMath for uint;
     using UQ112x112 for uint224;
-
+    //最小流动性
     uint public constant MINIMUM_LIQUIDITY = 10 ** 3;
     bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)')));
 
@@ -146,7 +146,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     /**
-     *  这个方法是用户添加流动性时调用的核心方法
+     * ‘这个方法是用户添加流动性时调用的核心方法
      * @param to 接收流动性代币的用户地址
      * @return liquidity 用户获得的流动性代币数量
      */
@@ -161,12 +161,14 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         //这里得到用户实际添加的token数量
         uint amount0 = balance0.sub(_reserve0);
         uint amount1 = balance1.sub(_reserve1);
-
+        // 这一步因为储备量还未更新，所以调用这个_mintFee不会收取协议费，只是返回一个协议费开关是否打开  
+        // 这里调用主要是为了防止其他步骤遗漏清算收协议费+增发流动性(atoken)(这里触发重新清算而已)
         bool feeOn = _mintFee(_reserve0, _reserve1);
         uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
         if (_totalSupply == 0) {
+            //避免极小份额价格操纵风险
             liquidity = Math.sqrt(amount0.mul(amount1)).sub(MINIMUM_LIQUIDITY);
-            _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
+            _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY 确保满足最小流动性要求
         } else {
             liquidity = Math.min(amount0.mul(_totalSupply) / _reserve0, amount1.mul(_totalSupply) / _reserve1);
         }
